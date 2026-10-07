@@ -18,9 +18,8 @@ An AI-powered personal expense tracker built as a full-stack portfolio and learn
 - [Running locally](#running-locally)
 - [Testing](#testing)
 - [Security notes](#security-notes)
-- [Known limitations / what's out of scope](#known-limitations--whats-out-of-scope)
 - [Trade-offs and decisions](#trade-offs-and-decisions)
-- [Explaining this project in an interview](#explaining-this-project-in-an-interview)
+
 
 ---
 
@@ -34,7 +33,7 @@ An AI-powered personal expense tracker built as a full-stack portfolio and learn
 - **AI categorization** — Gemini suggests a category for a new expense from the user's own category list (never invents a category).
 - **Ask Your Money** — free-form question answered by Gemini, grounded only in the authenticated user's own financial context; the model is instructed to say when it doesn't have enough data rather than guess.
 - **Monthly financial story** — Gemini turns last month's numbers (and the month before, for comparison) into a short plain-English summary.
-- **India Economy Pulse** *(implemented, hidden from the UI for this MVP)* — Gemini with Google Search grounding, returning current India economic developments with cited sources. The backend/service code is complete and tested; it's simply not wired into the AI Advisor page right now. See [Known limitations](#known-limitations--whats-out-of-scope).
+
 
 ## Tech stack
 
@@ -239,16 +238,7 @@ Backend tests cover auth, expenses, income, analytics, and AI (including user-is
 - Gemini API key is server-side only (`integrations/gemini.py`); it is never sent to or used from the frontend.
 - `.env` is gitignored; `.env.example` documents required variable names with placeholder values only.
 
-## Known limitations / what's out of scope
 
-Deliberately out of scope for this MVP (see `docs/ARCHITECTURE.md` and the project's own scope boundaries): bank/UPI transaction sync, OCR receipt scanning, investment tracking, credit-score integration, family/shared accounts, and complex ML prediction.
-
-Also currently out of the MVP surface, by explicit choice rather than oversight:
-
-- **India Economy Pulse** is fully implemented (Gemini Google Search grounding, backend endpoint, tests) but hidden from the AI Advisor UI. It depends on live web grounding being available/reliable from the Gemini API at demo time, which made it a riskier thing to depend on for a time-boxed interview demo than the core features.
-- **Savings goal progress is manual, not automatic.** `current_amount` is a plain stored field a user edits directly ("Saved so far") — it is not derived from net cash flow or linked to any transaction. This was a deliberate scope call: auto-tracking would require deciding how a user allocates monthly savings across multiple goals (equal split? priority order? manual allocation?), which is a real product decision, not a quick calculation. Manual entry is simple, explainable, and correct as far as it goes — it just doesn't update itself.
-- **Redis** is not used. The architecture reserves a place for it (`integrations/redis.py` exists as a stub), but no caching or rate-limiting need has actually been demonstrated yet — adding it now would be speculative infrastructure.
-- **No automated CI/CD pipeline** — tests and quality gates are run manually; see [Testing](#testing).
 
 ## Trade-offs and decisions
 
@@ -258,11 +248,4 @@ Also currently out of the MVP surface, by explicit choice rather than oversight:
 - **User-owned categories, not global categories.** Each user has their own category list (uniqueness enforced per-user, not globally), which avoids cross-account collisions and lets categories be personalized later without a migration.
 - **AI insight artifacts are cached as records (`financial_insights`), not as the source of truth.** They're stored so a generated story/insight can be revisited, but the next analytics calculation always goes back to the transaction tables, not to a previously generated AI summary.
 
-## Explaining this project in an interview
 
-A few prompts you can use to walk through the project confidently:
-
-- **"Walk me through what happens when a user adds an expense."** Frontend form -> `expenseApi.ts` -> `POST /api/v1/expenses` -> Pydantic validates the body -> auth dependency resolves `user_id` from the cookie (not the request body) -> `expense_service` checks the category belongs to the same user -> `expense_repository` persists via SQLAlchemy -> PostgreSQL -> response schema back to the frontend, which updates local state.
-- **"How do you keep the AI from making up numbers?"** See [AI design](#ai-design) above — bounded context, explicit "don't invent" instructions, structured-output validation, and a backend that remains the source of truth regardless of what the model returns.
-- **"What would you change with more time?"** An "add contribution" flow for savings goals (so progress updates without a full edit, and ideally ties back to net cash flow), income/expense recurring entries, a proper state-management layer if the app grew past its current server-state complexity, CI/CD, and finishing the Economy Pulse UI integration with a fallback cache so a grounding failure doesn't block the whole card.
-- **"What's the trickiest bug you hit?"** A Dashboard crash from a frontend/backend response-shape mismatch on the goals endpoint (`undefined.slice()`) — root-caused by comparing the actual browser error against the data contract rather than guessing at CORS/auth, which is a reminder that console errors usually tell you exactly where to look.
