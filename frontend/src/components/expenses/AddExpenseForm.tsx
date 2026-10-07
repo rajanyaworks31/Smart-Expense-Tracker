@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { FormEvent } from 'react'
+import { suggestExpenseCategory } from '../../services/aiApi'
 
 export type ExpenseFormData = {
   amount: number
@@ -14,9 +15,10 @@ type AddExpenseFormProps = {
   initialData?: ExpenseFormData
   title?: string
   submitLabel?: string
+  categories?: string[]
 }
 
-const categories = ['Food', 'Transport', 'Shopping', 'Entertainment', 'Bills', 'Health', 'Education', 'Other']
+const defaultCategories = ['Food', 'Transport', 'Shopping', 'Entertainment', 'Bills', 'Health', 'Education', 'Other']
 
 function AddExpenseForm({
   onAdd,
@@ -24,12 +26,35 @@ function AddExpenseForm({
   initialData,
   title = 'Add expense',
   submitLabel = 'Add expense',
+  categories = defaultCategories,
 }: AddExpenseFormProps) {
   const [amount, setAmount] = useState(initialData ? String(initialData.amount) : '')
   const [description, setDescription] = useState(initialData?.description ?? '')
-  const [category, setCategory] = useState(initialData?.category ?? 'Food')
+  const [category, setCategory] = useState(initialData?.category ?? categories[0] ?? 'Food')
   const [date, setDate] = useState(initialData?.date ?? new Date().toISOString().slice(0, 10))
   const [error, setError] = useState('')
+  const [isSuggesting, setIsSuggesting] = useState(false)
+  const [suggestion, setSuggestion] = useState<{ category: string; confidence: number; reason: string } | null>(null)
+
+  const handleSuggestCategory = async () => {
+    if (!description.trim()) {
+      setError('Add a description first so Gemini has something to categorize.')
+      return
+    }
+
+    setError('')
+    setIsSuggesting(true)
+    setSuggestion(null)
+    try {
+      const result = await suggestExpenseCategory({ description: description.trim() })
+      setCategory(result.category_name)
+      setSuggestion({ category: result.category_name, confidence: result.confidence, reason: result.reason })
+    } catch (suggestionError) {
+      setError(suggestionError instanceof Error ? suggestionError.message : 'Could not suggest a category right now.')
+    } finally {
+      setIsSuggesting(false)
+    }
+  }
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -94,17 +119,38 @@ function AddExpenseForm({
 
         <div>
           <label htmlFor="expense-description" className="mb-1.5 block text-sm font-medium">Description</label>
-          <input
-            id="expense-description"
-            type="text"
-            value={description}
-            onChange={(event) => {
-              setDescription(event.target.value)
-              setError('')
-            }}
-            placeholder="e.g. Dinner at a restaurant"
-            className="w-full rounded-xl border border-[#ded7cc] bg-[#faf8f4] px-4 py-3 text-sm outline-none transition focus:border-[#9a9187]"
-          />
+          <div className="flex gap-2">
+            <input
+              id="expense-description"
+              type="text"
+              value={description}
+              onChange={(event) => {
+                setDescription(event.target.value)
+                setError('')
+                setSuggestion(null)
+              }}
+              placeholder="e.g. Dinner at a restaurant"
+              className="min-w-0 flex-1 rounded-xl border border-[#ded7cc] bg-[#faf8f4] px-4 py-3 text-sm outline-none transition focus:border-[#9a9187]"
+            />
+            <button
+              type="button"
+              onClick={() => void handleSuggestCategory()}
+              disabled={isSuggesting || !description.trim()}
+              className="rounded-xl border border-[#d8ccbd] bg-[#f5eee4] px-3 py-2.5 text-xs font-semibold text-[#665a4d] transition hover:-translate-y-0.5 hover:bg-[#efe5d8] disabled:cursor-not-allowed disabled:opacity-50 sm:px-4"
+              title="Ask Gemini to suggest a category"
+            >
+              {isSuggesting ? 'Thinking…' : '✦ Suggest'}
+            </button>
+          </div>
+          {suggestion && (
+            <div className="mt-2 rounded-xl border border-[#dfe8e2] bg-[#edf4ef] px-3 py-2.5 text-xs text-[#5c7165]" role="status">
+              <div className="flex items-center justify-between gap-3">
+                <span><strong>Gemini suggests {suggestion.category}</strong> · {Math.round(suggestion.confidence * 100)}% confidence</span>
+                <span className="shrink-0">Review below ↓</span>
+              </div>
+              <p className="mt-1 leading-5">{suggestion.reason}</p>
+            </div>
+          )}
         </div>
 
         <div className="grid gap-4 sm:grid-cols-2">
@@ -113,7 +159,10 @@ function AddExpenseForm({
             <select
               id="expense-category"
               value={category}
-              onChange={(event) => setCategory(event.target.value)}
+              onChange={(event) => {
+                setCategory(event.target.value)
+                setSuggestion(null)
+              }}
               className="w-full rounded-xl border border-[#ded7cc] bg-[#faf8f4] px-4 py-3 text-sm outline-none focus:border-[#9a9187]"
             >
               {categories.map((item) => <option key={item}>{item}</option>)}

@@ -1,4 +1,6 @@
-import { NavLink, Outlet } from 'react-router-dom'
+import { NavLink, Outlet, useNavigate } from 'react-router-dom'
+import { useState } from 'react'
+import { logout } from '../../services/authApi'
 
 const navigation = [
   { label: 'Dashboard', to: '/', icon: '⌂' },
@@ -18,6 +20,20 @@ const linkClasses = ({ isActive }: { isActive: boolean }) =>
   }`
 
 function AppLayout() {
+  const navigate = useNavigate()
+  const [loggingOut, setLoggingOut] = useState(false)
+
+  const handleLogout = async () => {
+    setLoggingOut(true)
+    try {
+      await logout()
+    } catch {
+      // Even if the request fails, clear the client-side session by redirecting to login.
+    } finally {
+      navigate('/login', { replace: true })
+    }
+  }
+
   return (
     <div className="min-h-screen bg-[#f7f4ef] text-[#2d2926]">
       <aside className="fixed inset-y-0 left-0 hidden w-64 border-r border-[#e5dfd6] bg-[#f9f7f3] px-5 py-6 lg:flex lg:flex-col">
@@ -40,13 +56,18 @@ function AppLayout() {
         </nav>
 
         <div className="mt-auto space-y-1.5 border-t border-[#e5dfd6] pt-5">
-          <button className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-[#756c62] transition hover:bg-white hover:text-[#2d2926]">
-            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-black/5">⚙</span>
-            Settings
-          </button>
-          <button className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-[#756c62] transition hover:bg-white hover:text-[#2d2926]">
+          <NavLink to="/profile" className={linkClasses}>
             <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-black/5">◯</span>
             Profile
+          </NavLink>
+          <button
+            type="button"
+            onClick={() => void handleLogout()}
+            disabled={loggingOut}
+            className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-[#756c62] transition hover:bg-white hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-black/5">⏻</span>
+            {loggingOut ? 'Logging out…' : 'Log out'}
           </button>
         </div>
       </aside>

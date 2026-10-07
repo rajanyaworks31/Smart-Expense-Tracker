@@ -1,62 +1,386 @@
-# API Conventions
+# Smart Expense Tracker — API Contract
 
-These conventions are the initial contract for the Smart Expense Tracker backend. Endpoint-specific request and response schemas will be finalized in the API-contract step after the database model is approved.
+## 1. Base contract
 
-## Base URL
+Base path: `/api/v1`
 
-`/api/v1`
+The frontend communicates with FastAPI over JSON. SQLAlchemy models are never exposed directly; every response is mapped through a Pydantic response schema.
 
-## Resource naming
+### Authentication transport
 
-Use plural nouns for collections:
+Authentication uses secure HttpOnly cookies. The frontend does not store credentials or access tokens in `localStorage`. Requests that require authentication are sent with credentials enabled, and the backend resolves the current user from the server-side authentication dependency.
 
-- `expenses`
-- `income`
-- `budgets`
-- `goals`
-- `categories`
+### Money
 
-## HTTP methods
+Authoritative money values use PostgreSQL `NUMERIC(12,2)` and Python `Decimal`. API responses preserve decimal semantics; frontend TypeScript represents money as `string` rather than `number` to avoid binary floating-point rounding.
 
-- `GET` — retrieve
-- `POST` — create
-- `PATCH` — partial update
-- `DELETE` — delete
+### Dates
 
-## Response rules
+- Financial event dates use ISO date strings: `YYYY-MM-DD`.
+- System timestamps use ISO 8601 date-time strings.
 
-Return Pydantic response schemas. Do not expose SQLAlchemy ORM objects directly. Keep success payloads predictable and versionable; do not mix unrelated resource shapes in a single endpoint.
+### Standard errors
 
-## Errors
+```json
+{
+  "error": {
+    "code": "RESOURCE_NOT_FOUND",
+    "detail": "Expense was not found."
+  }
+}
+```
 
-Use a consistent JSON shape containing a machine-readable error code and human-readable detail. Validation errors remain structured so the frontend can map them to fields.
+Validation errors remain structured by FastAPI/Pydantic so the frontend can map field errors.
 
-## Pagination and filtering
+Common application error codes include:
 
-Collection endpoints may accept explicit query parameters such as `page`, `page_size`, `category`, `start_date`, `end_date`, `search`, and `sort` as appropriate. Defaults must be documented and bounded.
+- `AUTHENTICATION_REQUIRED`
+- `INVALID_CREDENTIALS`
+- `RESOURCE_NOT_FOUND`
+- `DUPLICATE_RESOURCE`
+- `OWNERSHIP_VIOLATION`
+- `INVALID_DATE_RANGE`
+- `INVALID_AMOUNT`
+- `CONFLICT`
 
-## Ownership
+## 2. Pagination and filters
 
-The authenticated user is derived from the server-side auth dependency. Client-provided user IDs are not used to determine ownership.
+Collection endpoints use:
 
-## Money
+- `page`: integer, default `1`, minimum `1`.
+- `page_size`: integer, default `20`, minimum `1`, maximum `100`.
+- `start_date`: optional `YYYY-MM-DD`.
+- `end_date`: optional `YYYY-MM-DD`.
+- `search`: optional text search where supported.
+- `sort`: explicit server-supported sort key; clients must not send arbitrary SQL expressions.
 
-Represent monetary values using fixed-precision decimal semantics in the backend/database. Do not use binary floating point as the authoritative storage type for money.
+Paginated responses use:
 
-## Dates
+```json
+{
+  "items": [],
+  "meta": {
+    "page": 1,
+    "page_size": 20,
+    "total": 0,
+    "total_pages": 0
+  }
+}
+```
 
-Persist timestamps consistently and expose ISO-compatible values through API schemas. Date-only financial fields should remain date-only rather than being converted into arbitrary local timestamps.
+## 3. Authentication endpoints
 
-## Authentication transport
+### `POST /auth/register`
 
-The frontend does not store authentication tokens in `localStorage`. The planned auth flow uses secure HttpOnly cookies so JavaScript cannot directly read the credentials. The frontend sends requests with credentials enabled when required by the API. The backend remains responsible for resolving the current user.
+Create an account and establish an authenticated session.
 
-## API versioning
+Request: `RegisterRequest`
 
-All application endpoints are namespaced under `/api/v1`. Breaking changes create a new version rather than silently changing an existing response contract.
+```json
+{
+  "email": "user@example.com",
+  "password": "at-least-8-characters",
+  "full_name": "Alex User"
+}
+```
 
-## AI endpoints
+Response: `201` → `AuthResponse`
 
-The current provider is Gemini. Keep provider-specific request construction out of routers and frontend services.
+The response does not contain a password or password hash. The session credential is delivered through a secure HttpOnly cookie.
 
-AI endpoints receive the user's natural-language request and retrieve relevant, authorized financial context server-side. The Gemini response is validated before being returned. AI endpoints never bypass ordinary authentication, ownership, or financial validation rules.
+### `POST /auth/login`
+
+Request: `LoginRequest`
+
+Response: `200` → `AuthResponse`
+
+Invalid credentials return `401` with `INVALID_CREDENTIALS`.
+
+### `POST /auth/logout`
+
+Response: `204` or an equivalent empty success response after clearing the session cookie.
+
+### `GET /auth/me`
+
+Return the authenticated user's profile.
+
+Response: `200` → `UserResponse`
+
+Unauthenticated requests return `401`.
+
+### `PATCH /auth/me`
+
+Request: `UserUpdate`
+
+Response: `200` → `UserResponse`
+
+## 4. Categories
+
+### `GET /categories`
+
+Return the authenticated user's categories.
+
+Response: `200` → `PaginatedResponse[CategoryResponse]`
+
+### `POST /categories`
+
+Request: `CategoryCreate`
+
+Response: `201` → `CategoryResponse`
+
+Category names are unique per user.
+
+### `GET /categories/{category_id}`
+
+Response: `200` → `CategoryResponse`
+
+### `PATCH /categories/{category_id}`
+
+Request: `CategoryUpdate`
+
+Response: `200` → `CategoryResponse`
+
+### `DELETE /categories/{category_id}`
+
+Response: `204`
+
+For the MVP, deletion is rejected when the category is referenced by existing expenses rather than silently deleting those expenses.
+
+## 5. Expenses
+
+### `GET /expenses`
+
+Query parameters:
+
+- `page`
+- `page_size`
+- `category_id`
+- `start_date`
+- `end_date`
+- `search`
+- `sort`
+
+Response: `200` → `PaginatedResponse[ExpenseResponse]`
+
+### `POST /expenses`
+
+Request: `ExpenseCreate`
+
+```json
+{
+  "category_id": "uuid",
+  "amount": "450.00",
+  "description": "Coffee",
+  "expense_date": "2026-08-16",
+  "notes": null
+}
+```
+
+Response: `201` → `ExpenseResponse`
+
+The server derives `user_id` from authentication. A client cannot assign an expense to another user.
+
+### `GET /expenses/{expense_id}`
+
+Response: `200` → `ExpenseResponse`
+
+### `PATCH /expenses/{expense_id}`
+
+Request: `ExpenseUpdate`
+
+Response: `200` → `ExpenseResponse`
+
+### `DELETE /expenses/{expense_id}`
+
+Response: `204`
+
+## 6. Income
+
+### `GET /income`
+
+Query parameters:
+
+- `page`
+- `page_size`
+- `start_date`
+- `end_date`
+- `search`
+- `sort`
+
+Response: `200` → `PaginatedResponse[IncomeResponse]`
+
+### `POST /income`
+
+Request: `IncomeCreate`
+
+Response: `201` → `IncomeResponse`
+
+### `GET /income/{income_id}`
+
+Response: `200` → `IncomeResponse`
+
+### `PATCH /income/{income_id}`
+
+Request: `IncomeUpdate`
+
+Response: `200` → `IncomeResponse`
+
+### `DELETE /income/{income_id}`
+
+Response: `204`
+
+## 7. Budgets
+
+### `GET /budgets`
+
+Query parameters:
+
+- `page`
+- `page_size`
+- `category_id`
+- `start_date`
+- `end_date`
+- `sort`
+
+Response: `200` → `PaginatedResponse[BudgetResponse]`
+
+### `POST /budgets`
+
+Request: `BudgetCreate`
+
+Response: `201` → `BudgetResponse`
+
+`period` is `monthly` for the MVP. `spent`, `remaining`, and utilization are calculated from expenses and are not persisted as authoritative budget columns.
+
+### `GET /budgets/{budget_id}`
+
+Response: `200` → `BudgetResponse`
+
+### `PATCH /budgets/{budget_id}`
+
+Request: `BudgetUpdate`
+
+Response: `200` → `BudgetResponse`
+
+### `DELETE /budgets/{budget_id}`
+
+Response: `204`
+
+## 8. Savings goals
+
+### `GET /goals`
+
+Query parameters:
+
+- `page`
+- `page_size`
+- `sort`
+
+Response: `200` → `PaginatedResponse[SavingsGoalResponse]`
+
+### `POST /goals`
+
+Request: `SavingsGoalCreate`
+
+Response: `201` → `SavingsGoalResponse`
+
+### `GET /goals/{goal_id}`
+
+Response: `200` → `SavingsGoalResponse`
+
+### `PATCH /goals/{goal_id}`
+
+Request: `SavingsGoalUpdate`
+
+Response: `200` → `SavingsGoalResponse`
+
+### `DELETE /goals/{goal_id}`
+
+Response: `204`
+
+## 9. Analytics
+
+Analytics are derived from persisted financial facts; the API does not write duplicate authoritative totals.
+
+### `GET /analytics/summary`
+
+Query parameters:
+
+- `start_date`: required
+- `end_date`: required
+
+Response: `200` → `AnalyticsSummary`
+
+The response includes:
+
+- total income
+- total expenses
+- net cash flow
+- savings rate
+- category spending breakdown
+- monthly trends
+- budget utilization
+
+If `end_date < start_date`, return `400` with `INVALID_DATE_RANGE`.
+
+## 10. AI
+
+AI is an interpretation layer over authorized financial facts. Deterministic arithmetic remains in the analytics/service layer.
+
+### `POST /ai/ask`
+
+Request: `AIAskRequest`
+
+```json
+{
+  "question": "Where did I overspend this month?"
+}
+```
+
+Response: `200` → `AIAskResponse`
+
+The server retrieves authorized financial context, sends only the necessary context to Gemini, validates the provider result, and returns the answer. The Gemini API key is server-side only.
+
+### `POST /ai/insights`
+
+Request: `AIInsightRequest`
+
+Response: `201` → `AIInsightResponse`
+
+The generated insight may be persisted as a `financial_insights` artifact. It is not treated as the source of truth for financial totals.
+
+AI endpoints must enforce the same authentication and ownership rules as ordinary financial endpoints.
+
+## 11. Ownership rules
+
+The authenticated user's identity is always derived server-side.
+
+Never accept a client-supplied `user_id` as the ownership authority for financial resources.
+
+For cross-resource references, ownership must be validated. For example, an expense may only reference a category owned by the same authenticated user.
+
+## 12. Contract verification status
+
+The endpoint contract and shared request/response shapes are implemented in the backend Pydantic schemas and frontend TypeScript types. Runtime verification is the remaining gate before this development step can be marked done.
+
+## 13. Contract-to-code mapping
+
+Backend Pydantic schemas:
+
+- `schemas/auth.py`
+- `schemas/user.py`
+- `schemas/category.py`
+- `schemas/expense.py`
+- `schemas/income.py`
+- `schemas/budget.py`
+- `schemas/savings_goal.py`
+- `schemas/financial_insight.py`
+- `schemas/analytics.py`
+- `schemas/ai.py`
+- `schemas/common.py`
+
+Frontend shared API types:
+
+- `frontend/src/types/api.ts`
+
+The next implementation step is to build services/repositories and routers against these contracts. No business logic belongs in these schema definitions.
